@@ -106,7 +106,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     isDuplicate: boolean;
     duplicateCandidate: Candidate | null;
   } | null>(null);
-  const [targetPagesCount, setTargetPagesCount] = useState<number>(3);
+  const [targetPagesCount, setTargetPagesCount] = useState<number>(1);
   const [capturedPages, setCapturedPages] = useState<string[]>([]);
   const [activePageToScan, setActivePageToScan] = useState<number>(1);
   
@@ -122,7 +122,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
   // Raw text & file name
   const [rawText, setRawText] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState(
-    rescanCandidate ? `Rescan_${rescanCandidate.first_name}_${rescanCandidate.last_name}_Resume.pdf` : 'Scanned_Resume_3Pages.pdf'
+    rescanCandidate ? `Rescan_${rescanCandidate.first_name}_${rescanCandidate.last_name}_Resume.pdf` : 'Scanned_Resume.pdf'
   );
   
   // Pipeline Processing State
@@ -151,12 +151,12 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       if (rescanCandidate && rescanCandidate.resumes?.[0]?.pages?.length) {
         setCapturedPages(rescanCandidate.resumes[0].pages);
         setUploadedFileName(`Rescan_${rescanCandidate.first_name}_${rescanCandidate.last_name}.pdf`);
-        setTargetPagesCount(Math.max(3, rescanCandidate.resumes[0].pages.length));
-        setActivePageToScan(rescanCandidate.resumes[0].pages.length + 1);
+        setTargetPagesCount(Math.max(1, rescanCandidate.resumes[0].pages.length));
+        setActivePageToScan(rescanCandidate.resumes[0].pages.length);
       } else {
         setCapturedPages([]);
         setActivePageToScan(1);
-        setTargetPagesCount(3);
+        setTargetPagesCount(1);
       }
       setProcessingError(null);
       setElapsedSeconds(0);
@@ -216,23 +216,41 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera access is not supported by this browser/device.');
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-        },
-        audio: false,
-      });
+      
+      let stream: MediaStream;
+      try {
+        // High quality environment/rear camera request
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode === 'environment' ? { ideal: 'environment' } : 'user',
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+          },
+          audio: false,
+        });
+      } catch {
+        // Fallback for devices with strict constraints (e.g. Samsung Internet / embedded webviews)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+          },
+          audio: false,
+        });
+      }
+
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('Video playback warning:', playErr);
+        }
         setCameraActive(true);
       }
     } catch (err: any) {
       console.warn('Camera initiation failed:', err);
-      setCameraError(err?.message || 'Unable to access camera. Please use file upload.');
+      setCameraError(err?.message || 'Unable to access camera. Please check camera permissions or use file upload.');
       setCameraActive(false);
     }
   };
@@ -299,9 +317,37 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
 
       const dataUrl = canvas.toDataURL('image/jpeg', 0.80);
       
-      const newPages = [...capturedPages, dataUrl];
+      const newPages = [...capturedPages];
+      if (activePageToScan <= newPages.length) {
+        newPages[activePageToScan - 1] = dataUrl;
+      } else {
+        newPages.push(dataUrl);
+      }
       setCapturedPages(newPages);
-      setActivePageToScan(newPages.length + 1);
+
+      if (newPages.length < targetPagesCount) {
+        setActivePageToScan(newPages.length + 1);
+      } else {
+        setActivePageToScan(newPages.length);
+      }
+    }
+  };
+
+  const retakePage = (pageIndex: number) => {
+    const updated = capturedPages.filter((_, i) => i !== pageIndex);
+    setCapturedPages(updated);
+    setActivePageToScan(pageIndex + 1);
+    if (!cameraActive) {
+      startCamera();
+    }
+  };
+
+  const addNextPageSlot = () => {
+    const newTarget = Math.max(targetPagesCount + 1, capturedPages.length + 1);
+    setTargetPagesCount(newTarget);
+    setActivePageToScan(capturedPages.length + 1);
+    if (!cameraActive) {
+      startCamera();
     }
   };
 
@@ -332,7 +378,9 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
   const removePage = (index: number) => {
     const updated = capturedPages.filter((_, i) => i !== index);
     setCapturedPages(updated);
-    setActivePageToScan(updated.length + 1);
+    const newTarget = Math.max(1, updated.length);
+    setTargetPagesCount(newTarget);
+    setActivePageToScan(Math.max(1, Math.min(updated.length + 1, newTarget)));
   };
 
   const handleMultipleFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -579,7 +627,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
                   {rescanCandidate ? `Re-Scan Resume: ${rescanCandidate.first_name} ${rescanCandidate.last_name}` : 'High-Speed Resume Scanner & OCR'}
                 </h3>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
-                  {mode === 'batch' ? '⚡ High-Volume Batch' : `${targetPagesCount} Pages Mode`}
+                  {mode === 'batch' ? '⚡ High-Volume Batch' : `${targetPagesCount === 1 ? '1 Page' : `${targetPagesCount} Pages`} Mode`}
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 font-medium">
@@ -990,42 +1038,59 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
                     <div className="space-y-3">
                       <div className="relative aspect-4/3 w-full bg-slate-950 rounded-2xl overflow-hidden border-2 border-slate-800 shadow-inner flex items-center justify-center">
                         
-                        {/* Live Video Stream */}
-                        <video
-                          ref={videoRef}
-                          playsInline
-                          muted
-                          autoPlay
-                          className={`w-full h-full object-cover transition-all ${
-                            isMirrored ? 'scale-x-[-1]' : ''
-                          } ${
-                            filterMode === 'contrast' ? 'filter contrast-125 brightness-105 saturate-110' : filterMode === 'bw' ? 'filter grayscale contrast-150 brightness-110' : ''
-                          }`}
-                        />
+                        {/* If current active page is already captured, show high-res preview */}
+                        {capturedPages[activePageToScan - 1] ? (
+                          <div className="relative w-full h-full bg-slate-950 flex items-center justify-center p-2">
+                            <img
+                              src={capturedPages[activePageToScan - 1]}
+                              alt={`Captured Page ${activePageToScan}`}
+                              className="w-full h-full object-contain rounded-lg"
+                            />
+                            <div className="absolute top-3 left-3 bg-emerald-600/90 text-white text-xs font-bold px-3 py-1 rounded-full backdrop-blur-xs flex items-center gap-1.5 shadow-md">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Page {activePageToScan} Captured</span>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Live Video Stream */
+                          <>
+                            <video
+                              ref={videoRef}
+                              playsInline
+                              muted
+                              autoPlay
+                              className={`w-full h-full object-cover transition-all ${
+                                isMirrored ? 'scale-x-[-1]' : ''
+                              } ${
+                                filterMode === 'contrast' ? 'filter contrast-125 brightness-105 saturate-110' : filterMode === 'bw' ? 'filter grayscale contrast-150 brightness-110' : ''
+                              }`}
+                            />
 
-                        {/* Flash feedback */}
-                        {shutterFlash && (
-                          <div className="absolute inset-0 bg-white animate-in fade-in duration-75" />
+                            {/* Flash feedback */}
+                            {shutterFlash && (
+                              <div className="absolute inset-0 bg-white animate-in fade-in duration-75" />
+                            )}
+
+                            {/* Scanner Document Framing Overlay */}
+                            <div className="absolute inset-4 sm:inset-6 border-2 border-dashed border-indigo-400/80 rounded-2xl pointer-events-none flex flex-col justify-between p-3">
+                              <div className="flex justify-between">
+                                <div className="w-5 h-5 border-t-4 border-l-4 border-indigo-400 -mt-1 -ml-1 rounded-tl-lg" />
+                                <div className="w-5 h-5 border-t-4 border-r-4 border-indigo-400 -mt-1 -mr-1 rounded-tr-lg" />
+                              </div>
+
+                              <div className="text-center">
+                                <span className="px-3 py-1 bg-slate-900/85 text-white text-[11px] font-bold rounded-full backdrop-blur-xs border border-white/20 shadow-md">
+                                  Position Page {activePageToScan} of {targetPagesCount} inside frame
+                                </span>
+                              </div>
+
+                              <div className="flex justify-between">
+                                <div className="w-5 h-5 border-b-4 border-l-4 border-indigo-400 -mb-1 -ml-1 rounded-bl-lg" />
+                                <div className="w-5 h-5 border-b-4 border-r-4 border-indigo-400 -mb-1 -mr-1 rounded-br-lg" />
+                              </div>
+                            </div>
+                          </>
                         )}
-
-                        {/* Scanner Document Framing Overlay */}
-                        <div className="absolute inset-4 sm:inset-6 border-2 border-dashed border-indigo-400/80 rounded-2xl pointer-events-none flex flex-col justify-between p-3">
-                          <div className="flex justify-between">
-                            <div className="w-5 h-5 border-t-4 border-l-4 border-indigo-400 -mt-1 -ml-1 rounded-tl-lg" />
-                            <div className="w-5 h-5 border-t-4 border-r-4 border-indigo-400 -mt-1 -mr-1 rounded-tr-lg" />
-                          </div>
-
-                          <div className="text-center">
-                            <span className="px-3 py-1 bg-slate-900/85 text-white text-[11px] font-bold rounded-full backdrop-blur-xs border border-white/20 shadow-md">
-                              Position Page {activePageToScan} of {targetPagesCount} inside frame
-                            </span>
-                          </div>
-
-                          <div className="flex justify-between">
-                            <div className="w-5 h-5 border-b-4 border-l-4 border-indigo-400 -mb-1 -ml-1 rounded-bl-lg" />
-                            <div className="w-5 h-5 border-b-4 border-r-4 border-indigo-400 -mb-1 -mr-1 rounded-br-lg" />
-                          </div>
-                        </div>
 
                         {/* Top camera controls */}
                         <div className="absolute top-2 right-2 flex items-center space-x-1.5 z-10">
@@ -1084,22 +1149,83 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
                         )}
                       </div>
 
-                      {/* Snap Button */}
-                      <div className="flex items-center justify-center">
-                        <button
-                          id="capture-page-btn"
-                          type="button"
-                          onClick={capturePhoto}
-                          disabled={!cameraActive}
-                          className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-6 py-3 rounded-full font-bold shadow-lg shadow-indigo-200 active:scale-95 transition-all cursor-pointer text-sm"
-                        >
-                          <Camera className="w-5 h-5" />
-                          <span>
-                            {capturedPages[activePageToScan - 1] 
-                              ? `Re-Capture Page ${activePageToScan}` 
-                              : `Snap Page ${activePageToScan} (${capturedPages.length}/${targetPagesCount})`}
-                          </span>
-                        </button>
+                      {/* Camera Action Control Center */}
+                      <div className="space-y-2">
+                        {capturedPages[activePageToScan - 1] ? (
+                          /* When current page is captured */
+                          <div className="flex flex-col gap-2">
+                            {/* Big Prominent Immediate Process Button */}
+                            <button
+                              id="instant-process-captured-btn"
+                              type="button"
+                              onClick={runPipeline}
+                              className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white py-3.5 px-6 rounded-2xl font-bold shadow-lg shadow-indigo-200 active:scale-98 transition-all cursor-pointer text-sm sm:text-base ring-2 ring-indigo-300 animate-pulse"
+                            >
+                              <Sparkles className="w-5 h-5 text-amber-300" />
+                              <span>
+                                {capturedPages.length === 1 
+                                  ? '⚡ Process 1-Page Resume Now (Instant OCR)' 
+                                  : `⚡ Process ${capturedPages.length} Pages Resume Now (Instant OCR)`}
+                              </span>
+                            </button>
+
+                            {/* Secondary Action Toolbar */}
+                            <div className="grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => retakePage(activePageToScan - 1)}
+                                className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center space-x-1.5 cursor-pointer transition-colors"
+                              >
+                                <Camera className="w-3.5 h-3.5" />
+                                <span>Retake Photo</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => rotatePage(activePageToScan - 1)}
+                                className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center space-x-1.5 cursor-pointer transition-colors"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>Rotate 90°</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={addNextPageSlot}
+                                className="py-2.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center space-x-1.5 cursor-pointer transition-colors border border-indigo-200"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>+ Add Page {capturedPages.length + 1}</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* When live camera is aiming for a capture */
+                          <div className="flex flex-col items-center gap-2">
+                            <button
+                              id="capture-page-btn"
+                              type="button"
+                              onClick={capturePhoto}
+                              disabled={!cameraActive}
+                              className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-8 py-3.5 rounded-2xl font-bold shadow-lg shadow-indigo-200 active:scale-95 transition-all cursor-pointer text-sm sm:text-base"
+                            >
+                              <Camera className="w-5 h-5" />
+                              <span>
+                                Snap Page {activePageToScan} of {targetPagesCount}
+                              </span>
+                            </button>
+
+                            {capturedPages.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={runPipeline}
+                                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline underline-offset-2 py-1 cursor-pointer"
+                              >
+                                Or Process {capturedPages.length} {capturedPages.length === 1 ? 'Page' : 'Pages'} Captured So Far →
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1309,7 +1435,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
                           type="button"
                           onClick={() => {
                             if (mode === 'camera') {
-                              capturePhoto();
+                              addNextPageSlot();
                             } else {
                               singleSlotInputRef.current?.click();
                             }
@@ -1408,7 +1534,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
               <Sparkles className="w-4 h-4" />
               <span>
                 {capturedPages.length > 0
-                  ? `Process ${capturedPages.length} Pages (High-Speed OCR)`
+                  ? `Process ${capturedPages.length} ${capturedPages.length === 1 ? 'Page' : 'Pages'} (High-Speed OCR)`
                   : 'Process Resume (High-Speed OCR)'}
               </span>
             </button>
