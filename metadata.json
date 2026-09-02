@@ -1,0 +1,6 @@
+{
+  "name": "AI Resume Scanner & Job Matcher",
+  "description": "Mobile-first AI resume scanner, OCR extraction, structured candidate profiling, transparent points-based role matching, and human-in-the-loop recruiter review queue.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
