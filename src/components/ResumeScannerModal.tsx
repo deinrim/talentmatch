@@ -164,8 +164,8 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     };
   }, [isOpen, mode, facingMode, isProcessing, batchProcessing]);
 
-  // High-Speed Image Downscaler (< 150KB for rapid AI multimodal transmission)
-  const compressImage = (dataUrl: string, maxDim = 1280, quality = 0.82): Promise<string> => {
+  // High-Speed Image Downscaler (< 80KB per page for rapid AI multimodal transmission)
+  const compressImage = (dataUrl: string, maxDim = 960, quality = 0.78): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -248,10 +248,10 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // Scale frame to optimal dimensions
-    let w = video.videoWidth || 1280;
+    // Scale frame to optimal dimensions (< 960px for instant OCR)
+    let w = video.videoWidth || 960;
     let h = video.videoHeight || 720;
-    const maxDim = 1280;
+    const maxDim = 960;
     if (w > maxDim || h > maxDim) {
       if (w > h) {
         h = Math.round((h * maxDim) / w);
@@ -284,7 +284,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.80);
       
       const newPages = [...capturedPages, dataUrl];
       setCapturedPages(newPages);

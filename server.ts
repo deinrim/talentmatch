@@ -55,37 +55,43 @@ function getAIClient() {
   });
 }
 
-// Multi-Model Fallback for Ultra Fast AI Generation & OCR
+// Multi-Model Fallback for Robust & Ultra-Fast AI Generation & OCR
 async function generateGeminiContentWithFallback(requestOptions: {
   contents: any;
   config?: any;
 }) {
   const ai = getAIClient();
   const modelsToTry = [
-    'gemini-3.6-flash',
     'gemini-3.5-flash',
+    'gemini-3.6-flash',
     'gemini-3.7-flash',
   ];
 
   let lastError: any = null;
   for (const model of modelsToTry) {
     try {
-      console.log(`[GEMINI] Fast OCR attempt with model ${model}...`);
+      console.log(`[GEMINI] Fast OCR/Extraction attempt with model ${model}...`);
       
+      // Fast timeout per model with instant fallback
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 6.5s`)), 6500)
+        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 9s`)), 9000)
       );
+
+      const mergedConfig = {
+        thinkingConfig: { thinkingBudget: 0 },
+        ...requestOptions.config,
+      };
 
       const generatePromise = ai.models.generateContent({
         model: model,
         contents: requestOptions.contents,
-        config: requestOptions.config,
+        config: mergedConfig,
       });
 
       const aiResponse: any = await Promise.race([generatePromise, timeoutPromise]);
 
       if (aiResponse && aiResponse.text) {
-        console.log(`[GEMINI] Model ${model} succeeded! Output length: ${aiResponse.text.length}`);
+        console.log(`[GEMINI] Model ${model} succeeded in record time! Length: ${aiResponse.text.length}`);
         return { text: aiResponse.text, model };
       }
     } catch (err: any) {
@@ -93,7 +99,7 @@ async function generateGeminiContentWithFallback(requestOptions: {
       lastError = err;
     }
   }
-  throw lastError || new Error('All Gemini models failed to respond in time.');
+  throw lastError || new Error('All Gemini models failed to respond.');
 }
 
 // Log Audit Action
@@ -435,50 +441,35 @@ app.post('/api/candidates/process-resume', async (req, res) => {
     let extractedData: any = null;
 
     const extractionPrompt = `
-You are an expert HR recruitment OCR and document understanding engine for a major insurance & financial services corporation.
-You are given a multi-page resume/CV document (containing ${images.length > 0 ? `${images.length} image pages` : 'text content'}).
+You are a fast HR recruitment OCR parser.
+Examine the resume document pages and extract the candidate profile into this JSON schema:
 
-TASK:
-Thoroughly examine ALL provided pages (Page 1, Page 2, Page 3, etc.) and accurately extract ALL candidate facts into the strict JSON schema below.
-
-CRITICAL INSTRUCTIONS & ANTI-HALLUCINATION RULES:
-1. CANDIDATE NAME: Inspect the header, top banner, or title block of Page 1. Extract the candidate's REAL actual full name (e.g., "Arun Kumar Jaiswal", "Amit Sharma", etc.). DO NOT return placeholder text like "Candidate Resume", "New Candidate", or "Scanned Resume".
-2. CONTACT INFO: Extract the exact phone number (e.g. +91 98..., Indian 10-digit mobile), email address, and city/state location if visible anywhere across the pages.
-3. WORK EXPERIENCE: Inspect all employment entries across all pages. For each role, extract company name, job title/designation, start date (YYYY-MM), end date (YYYY-MM or Present), and key bulleted achievements/responsibilities.
-4. TOTAL EXPERIENCE: Calculate 'total_experience_months' accurately by summing months across work history dates.
-5. EDUCATION: Extract all college/university degrees (e.g., B.Com, MBA, B.Tech, B.Sc, 10th/12th, etc.), institutions, graduation years, and percentages/grades.
-6. SKILLS & CERTIFICATIONS: Extract all domain skills (e.g. Bancassurance, Life Insurance, General Insurance, ULIPs, Branch Banking, Portfolio Management, Sales), technical skills, tools (CRM, Excel), and certifications (IRDAI IC-38, AMFI, etc.).
-7. FULL TRANSCRIPTION: In the "extracted_raw_text" field, provide the complete, readable OCR text transcribed from all pages sequentially.
-
-JSON Schema to return:
 {
   "first_name": "string",
   "last_name": "string",
   "email": "string or null",
   "phone": "string or null",
   "location": "string or null",
-  "professional_summary": "string",
+  "professional_summary": "string (2-3 sentences max)",
   "total_experience_months": number,
   "current_job_title": "string or null",
   "current_company": "string or null",
   "notice_period": "string or null",
   "expected_salary": "string or null",
-  "extracted_raw_text": "string (full multi-page verbatim OCR text transcription)",
   "education": [
     {
       "qualification": "string",
       "specialization": "string or null",
       "institution": "string",
-      "year": "string or null",
-      "grade": "string or null"
+      "year": "string or null"
     }
   ],
   "experience": [
     {
       "company": "string",
       "job_title": "string",
-      "start_date": "string (YYYY-MM or year)",
-      "end_date": "string (YYYY-MM or Present)",
+      "start_date": "string",
+      "end_date": "string",
       "is_current": boolean,
       "duration_months": number,
       "responsibilities": ["string"]
