@@ -399,8 +399,12 @@ export function App() {
   // Handle Merge Candidates
   const handleMergeSuccess = (primaryCandidate: Candidate) => {
     setCandidates(prev => [primaryCandidate, ...prev.filter(c => c.id !== primaryCandidate.id && c.id !== duplicatePair?.candidateB.id)]);
+    setDuplicatePair(null);
     setSelectedCandidate(primaryCandidate);
     setActiveView('candidate-detail');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
     showToast(`✓ Candidate record merged successfully into ${primaryCandidate.candidate_code}`);
   };
 
@@ -618,6 +622,7 @@ export function App() {
         isOpen={isScannerOpen}
         jobRoles={jobRoles}
         initialJobRoleId={scannerInitialRoleId}
+        allCandidates={candidates}
         onClose={() => {
           setIsScannerOpen(false);
           setRescanCandidate(null);
@@ -669,6 +674,16 @@ export function App() {
           candidateA={duplicatePair.candidateA}
           candidateB={duplicatePair.candidateB}
           onMergeSuccess={handleMergeSuccess}
+          onKeepBoth={() => {
+            const newCand = duplicatePair.candidateA;
+            setDuplicatePair(null);
+            setSelectedCandidate(newCand);
+            setActiveView('candidate-detail');
+            if (typeof window !== 'undefined') {
+              window.scrollTo({ top: 0, behavior: 'instant' });
+            }
+            showToast(`Kept both profiles as separate candidate records.`);
+          }}
         />
       )}
 

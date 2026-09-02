@@ -62,9 +62,9 @@ async function generateGeminiContentWithFallback(requestOptions: {
 }) {
   const ai = getAIClient();
   const modelsToTry = [
-    'gemini-3.5-flash',
-    'gemini-3.6-flash',
-    'gemini-3.7-flash',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
   ];
 
   let lastError: any = null;
@@ -74,7 +74,7 @@ async function generateGeminiContentWithFallback(requestOptions: {
       
       // Fast timeout per model with instant fallback
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 9s`)), 9000)
+        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 6s`)), 6000)
       );
 
       const mergedConfig = {
