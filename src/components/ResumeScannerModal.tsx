@@ -14,6 +14,8 @@ import {
   FlipHorizontal,
   FileCheck2,
   ChevronRight,
+  ChevronDown,
+  Briefcase,
   RotateCcw,
   Sliders,
   Zap,
@@ -22,7 +24,7 @@ import {
   Check
 } from 'lucide-react';
 import { SAMPLE_TEST_RESUMES } from '../initialData';
-import { Candidate, ProcessingStep } from '../types';
+import { Candidate, JobRole, ProcessingStep } from '../types';
 
 interface ResumeScannerModalProps {
   isOpen: boolean;
@@ -30,6 +32,8 @@ interface ResumeScannerModalProps {
   onSuccess: (candidate: Candidate, isDuplicate: boolean, duplicateCandidate: Candidate | null) => void;
   rescanCandidate?: Candidate | null;
   onBatchSuccess?: (candidates: Candidate[]) => void;
+  jobRoles?: JobRole[];
+  initialJobRoleId?: string | null;
 }
 
 const PIPELINE_STEPS: { id: ProcessingStep; label: string; desc: string }[] = [
@@ -91,9 +95,17 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
   onClose,
   onSuccess,
   rescanCandidate = null,
-  onBatchSuccess
+  onBatchSuccess,
+  jobRoles = [],
+  initialJobRoleId = null
 }) => {
   const [mode, setMode] = useState<'camera' | 'upload' | 'batch' | 'sample'>('camera');
+  const [selectedJobRoleId, setSelectedJobRoleId] = useState<string | null>(initialJobRoleId || null);
+  const [completedScanData, setCompletedScanData] = useState<{
+    candidate: Candidate;
+    isDuplicate: boolean;
+    duplicateCandidate: Candidate | null;
+  } | null>(null);
   const [targetPagesCount, setTargetPagesCount] = useState<number>(3);
   const [capturedPages, setCapturedPages] = useState<string[]>([]);
   const [activePageToScan, setActivePageToScan] = useState<number>(1);
@@ -149,8 +161,9 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       setProcessingError(null);
       setElapsedSeconds(0);
       setBatchCompleted(false);
+      setCompletedScanData(null);
     }
-  }, [isOpen, rescanCandidate]);
+  }, [isOpen, rescanCandidate, initialJobRoleId]);
 
   // Manage camera lifecycle
   useEffect(() => {
@@ -429,7 +442,8 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
           images: capturedPages,
           rawText: rawText,
           fileName: uploadedFileName,
-          source: capturedPages.length > 0 ? 'Camera Scan' : 'Manual Upload'
+          source: capturedPages.length > 0 ? 'Camera Scan' : 'Manual Upload',
+          targetJobRoleId: selectedJobRoleId
         }),
       });
 
@@ -444,10 +458,15 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       const data = await response.json();
       
       // Instantly sweep through remaining steps to finish
-      setCurrentStepIndex(PIPELINE_STEPS.length - 2);
-      await new Promise(r => setTimeout(r, 120));
       setCurrentStepIndex(PIPELINE_STEPS.length - 1);
-      await new Promise(r => setTimeout(r, 200));
+      setCompletedScanData({
+        candidate: data.candidate,
+        isDuplicate: data.isDuplicate,
+        duplicateCandidate: data.duplicateCandidate
+      });
+
+      // Quick visual confirmation before transitioning
+      await new Promise(r => setTimeout(r, 450));
 
       setIsProcessing(false);
       onSuccess(data.candidate, data.isDuplicate, data.duplicateCandidate);
@@ -485,7 +504,10 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       const response = await fetch('/api/candidates/process-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: itemsToProcess })
+        body: JSON.stringify({ 
+          items: itemsToProcess,
+          targetJobRoleId: selectedJobRoleId
+        })
       });
 
       clearInterval(progressTimer);
@@ -579,7 +601,39 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           
           {/* Active Processing Flow Visualizer */}
-          {isProcessing ? (
+          {completedScanData ? (
+            <div className="py-8 px-4 text-center animate-in fade-in">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-lg ring-8 ring-emerald-50">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600" />
+              </div>
+              <h4 className="text-xl font-bold text-slate-900">
+                Resume Scanning & Match Complete!
+              </h4>
+              <p className="text-sm font-semibold text-emerald-700 mt-1">
+                {completedScanData.candidate.first_name} {completedScanData.candidate.last_name} ({completedScanData.candidate.candidate_code})
+              </p>
+              <div className="mt-3 inline-flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-800 border border-slate-200">
+                <span>Evaluated For:</span>
+                <span className="text-indigo-600 font-bold">{completedScanData.candidate.top_match?.job_role_name || 'Role'}</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                  {completedScanData.candidate.top_match?.overall_score || 0}% Fit
+                </span>
+              </div>
+              <div className="mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSuccess(completedScanData.candidate, completedScanData.isDuplicate, completedScanData.duplicateCandidate);
+                    onClose();
+                  }}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm px-6 py-3 rounded-xl shadow-lg shadow-indigo-200 cursor-pointer active:scale-95 transition-all"
+                >
+                  <span>Open Candidate Profile Now</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ) : isProcessing ? (
             <div className="py-5 px-2 text-center animate-in fade-in">
               <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 animate-spin">
                 <RefreshCw className="w-6 h-6" />
@@ -700,6 +754,59 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
                   </button>
                 </div>
               )}
+
+              {/* Target Job Role / Requisition Selector */}
+              <div className="mb-4 bg-linear-to-r from-slate-50 to-indigo-50/50 p-3 rounded-2xl border border-indigo-100 shadow-xs">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="target-job-role-select" className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Target Requisition / Post:</span>
+                  </label>
+                  <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100/90 px-2 py-0.5 rounded-full border border-indigo-200">
+                    {selectedJobRoleId ? 'Designated Role Scoring' : 'Auto-Match Across All Roles'}
+                  </span>
+                </div>
+                
+                <div className="relative">
+                  <select
+                    id="target-job-role-select"
+                    value={selectedJobRoleId || ''}
+                    onChange={(e) => setSelectedJobRoleId(e.target.value ? e.target.value : null)}
+                    className="w-full bg-white border border-slate-300 hover:border-indigo-400 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 transition-all cursor-pointer appearance-none pr-8"
+                  >
+                    <option value="">🌐 Auto-Match (AI Discovers Best Fit Across All Active Requisitions)</option>
+                    {jobRoles.filter(jr => jr.is_active).map(role => (
+                      <option key={role.id} value={role.id}>
+                        💼 {role.role_name} • {role.department} ({role.min_experience_years}-{role.max_experience_years} Yrs)
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <ChevronDown className="w-4 h-4" />
+                  </div>
+                </div>
+
+                {/* Selected Role Snapshot */}
+                {selectedJobRoleId && (
+                  (() => {
+                    const role = jobRoles.find(r => r.id === selectedJobRoleId);
+                    if (!role) return null;
+                    return (
+                      <div className="mt-2 pt-2 border-t border-indigo-100/60 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                        <span className="font-bold text-slate-700">Scoring against:</span>
+                        <span className="bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-700 font-medium">
+                          {role.min_experience_years}-{role.max_experience_years} Yrs Experience
+                        </span>
+                        {role.requirements.filter(r => r.mandatory).slice(0, 3).map((req, rIdx) => (
+                          <span key={rIdx} className="bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 text-indigo-700 font-medium">
+                            ✓ {req.requirement_name}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
 
               {/* Mode Switcher Tabs */}
               <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-100 rounded-2xl mb-4">

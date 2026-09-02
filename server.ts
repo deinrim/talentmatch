@@ -424,7 +424,7 @@ app.get('/api/candidates/:id', (req, res) => {
   res.json(candidate);
 });
 
-// 4. Resume Scan & OCR Processing Pipeline via Gemini 3.7 Flash
+// 4. Resume Scan & OCR Processing Pipeline via Gemini
 app.post('/api/candidates/process-resume', async (req, res) => {
   try {
     const { 
@@ -432,10 +432,11 @@ app.post('/api/candidates/process-resume', async (req, res) => {
       images = [], // array of base64 strings (data:image/png;base64,... or raw base64)
       rawText = '', 
       fileName = 'Scanned_Resume.pdf',
-      source = 'Camera Scan'
+      source = 'Camera Scan',
+      targetJobRoleId = null
     } = req.body;
 
-    console.log(`[PROCESS RESUME] Starting OCR & AI extraction. Images: ${images.length}, RawText length: ${rawText.length}, CandidateId: ${candidateId || 'NEW'}`);
+    console.log(`[PROCESS RESUME] Starting OCR & AI extraction. TargetRole: ${targetJobRoleId || 'AUTO-MATCH'}, Images: ${images.length}, RawText length: ${rawText.length}, CandidateId: ${candidateId || 'NEW'}`);
 
     const ai = getAIClient();
     let extractedData: any = null;
@@ -741,24 +742,41 @@ Examine the resume document pages and extract the candidate profile into this JS
     }
 
     // Calculate matches across all active job roles
-    const matches: CandidateJobMatch[] = dbJobRoles
+    let matches: CandidateJobMatch[] = dbJobRoles
       .filter(jr => jr.is_active)
-      .map(jr => evaluateCandidateMatch(candidateObj, jr))
-      .sort((a, b) => b.overall_score - a.overall_score);
+      .map(jr => evaluateCandidateMatch(candidateObj, jr));
+
+    if (targetJobRoleId) {
+      const targetRole = dbJobRoles.find(jr => jr.id === targetJobRoleId);
+      if (targetRole) {
+        const targetMatch = evaluateCandidateMatch(candidateObj, targetRole);
+        const otherMatches = matches
+          .filter(m => m.job_role_id !== targetJobRoleId)
+          .sort((a, b) => b.overall_score - a.overall_score);
+        matches = [targetMatch, ...otherMatches];
+        candidateObj.top_match = targetMatch;
+      } else {
+        matches.sort((a, b) => b.overall_score - a.overall_score);
+        candidateObj.top_match = matches[0];
+      }
+    } else {
+      matches.sort((a, b) => b.overall_score - a.overall_score);
+      candidateObj.top_match = matches[0];
+    }
 
     candidateObj.matches = matches;
-    candidateObj.top_match = matches[0];
 
     // Add match to timeline
-    if (matches[0]) {
+    if (candidateObj.top_match) {
+      const topM = candidateObj.top_match;
       candidateObj.timeline.push({
         id: `tl-${Date.now()}-3`,
         timestamp: new Date(Date.now() + 2000).toISOString(),
-        action: `AI Match: ${matches[0].recommendation === 'GREEN' ? '🟢 STRONG MATCH' : matches[0].recommendation === 'YELLOW' ? '🟡 REVIEW REQUIRED' : '🔴 REQUIREMENTS ISSUE'} (${matches[0].overall_score}%)`,
+        action: `AI Match: ${topM.recommendation === 'GREEN' ? '🟢 STRONG MATCH' : topM.recommendation === 'YELLOW' ? '🟡 REVIEW REQUIRED' : '🔴 REQUIREMENTS ISSUE'} (${topM.overall_score}% for ${topM.job_role_name})`,
         actor: 'Role Matching Engine v2.4',
         actor_role: 'ADMIN',
-        details: `Top matched role: "${matches[0].job_role_name}". ${matches[0].summary_reason}`,
-        badge_color: matches[0].recommendation === 'GREEN' ? 'green' : matches[0].recommendation === 'YELLOW' ? 'amber' : 'red'
+        details: targetJobRoleId ? `Evaluated for designated requisition: "${topM.job_role_name}". ${topM.summary_reason}` : `Top matched role: "${topM.job_role_name}". ${topM.summary_reason}`,
+        badge_color: topM.recommendation === 'GREEN' ? 'green' : topM.recommendation === 'YELLOW' ? 'amber' : 'red'
       });
     }
 
@@ -823,12 +841,12 @@ Examine the resume document pages and extract the candidate profile into this JS
 // 4b. Batch Multi-Resume Fast Ingestion & Processing
 app.post('/api/candidates/process-batch', async (req, res) => {
   try {
-    const { items = [] } = req.body;
+    const { items = [], targetJobRoleId = null } = req.body;
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'No items provided for batch processing.' });
     }
 
-    console.log(`[BATCH OCR] Starting batch processing for ${items.length} resumes...`);
+    console.log(`[BATCH OCR] Starting batch processing for ${items.length} resumes (TargetRole: ${targetJobRoleId || 'AUTO-MATCH'})...`);
     const results: any[] = [];
 
     // Process concurrently with a pool of up to 4 parallel workers
@@ -963,13 +981,29 @@ app.post('/api/candidates/process-batch', async (req, res) => {
         updated_at: new Date().toISOString()
       };
 
-      const matches = dbJobRoles
+      let matches = dbJobRoles
         .filter(jr => jr.is_active)
-        .map(jr => evaluateCandidateMatch(candidateObj, jr))
-        .sort((a, b) => b.overall_score - a.overall_score);
+        .map(jr => evaluateCandidateMatch(candidateObj, jr));
+
+      if (targetJobRoleId) {
+        const targetRole = dbJobRoles.find(jr => jr.id === targetJobRoleId);
+        if (targetRole) {
+          const targetMatch = evaluateCandidateMatch(candidateObj, targetRole);
+          const otherMatches = matches
+            .filter(m => m.job_role_id !== targetJobRoleId)
+            .sort((a, b) => b.overall_score - a.overall_score);
+          matches = [targetMatch, ...otherMatches];
+          candidateObj.top_match = targetMatch;
+        } else {
+          matches.sort((a, b) => b.overall_score - a.overall_score);
+          candidateObj.top_match = matches[0];
+        }
+      } else {
+        matches.sort((a, b) => b.overall_score - a.overall_score);
+        candidateObj.top_match = matches[0];
+      }
 
       candidateObj.matches = matches;
-      candidateObj.top_match = matches[0];
 
       dbCandidates.unshift(candidateObj);
 

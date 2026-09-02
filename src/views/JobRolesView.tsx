@@ -14,7 +14,8 @@ import {
   Edit3,
   Trash2,
   Eye,
-  Filter
+  Filter,
+  Camera
 } from 'lucide-react';
 import { JobRole } from '../types';
 
@@ -25,6 +26,7 @@ interface JobRolesViewProps {
   onEditRole?: (role: JobRole) => void;
   onDeleteRole?: (role: JobRole) => void;
   onCreateRole?: () => void;
+  onScanForRole?: (roleId: string) => void;
 }
 
 export const JobRolesView: React.FC<JobRolesViewProps> = ({
@@ -34,6 +36,7 @@ export const JobRolesView: React.FC<JobRolesViewProps> = ({
   onEditRole,
   onDeleteRole,
   onCreateRole,
+  onScanForRole,
 }) => {
   const [expandedRoleId, setExpandedRoleId] = useState<string | null>(jobRoles[0]?.id || null);
 
@@ -146,6 +149,18 @@ export const JobRolesView: React.FC<JobRolesViewProps> = ({
                       {role.shortlisted_count || 0} shortlisted
                     </span>
                   </div>
+
+                  {/* Scan Resume for Role */}
+                  {onScanForRole && (
+                    <button
+                      onClick={() => onScanForRole(role.id)}
+                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition-all flex items-center space-x-1 cursor-pointer"
+                      title="Scan resume specifically for this job role"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Scan for Role</span>
+                    </button>
+                  )}
 
                   {/* Filter Candidates by Role */}
                   {onSelectRoleFilter && (

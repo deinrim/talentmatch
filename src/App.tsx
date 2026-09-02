@@ -46,6 +46,7 @@ export function App() {
   // Modals State
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [rescanCandidate, setRescanCandidate] = useState<Candidate | null>(null);
+  const [scannerInitialRoleId, setScannerInitialRoleId] = useState<string | null>(null);
   const [decisionCandidate, setDecisionCandidate] = useState<Candidate | null>(null);
   const [isAiJdModalOpen, setIsAiJdModalOpen] = useState(false);
   const [duplicatePair, setDuplicatePair] = useState<{ candidateA: Candidate; candidateB: Candidate } | null>(null);
@@ -140,6 +141,8 @@ export function App() {
     isDuplicate: boolean, 
     duplicateCandidate: Candidate | null
   ) => {
+    setIsScannerOpen(false);
+    setRescanCandidate(null);
     setCandidates(prev => [newCandidate, ...prev.filter(c => c.id !== newCandidate.id)]);
 
     if (isDuplicate && duplicateCandidate) {
@@ -151,6 +154,10 @@ export function App() {
     } else {
       setSelectedCandidate(newCandidate);
       setActiveView('candidate-detail');
+      // Instant mobile scroll to top so the candidate review is immediately visible
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+      }
       showToast(`✓ Resume processed & AI match calculated: ${newCandidate.top_match?.overall_score || 0}% fit`);
     }
   };
@@ -544,6 +551,11 @@ export function App() {
               onEditRole={handleOpenEditJobRole}
               onDeleteRole={handleRequestDeleteJobRole}
               onCreateRole={handleOpenCreateJobRole}
+              onScanForRole={(roleId) => {
+                setScannerInitialRoleId(roleId);
+                setRescanCandidate(null);
+                setIsScannerOpen(true);
+              }}
             />
           )}
 
@@ -604,16 +616,23 @@ export function App() {
       {/* 1. Resume Scanner Modal */}
       <ResumeScannerModal
         isOpen={isScannerOpen}
+        jobRoles={jobRoles}
+        initialJobRoleId={scannerInitialRoleId}
         onClose={() => {
           setIsScannerOpen(false);
           setRescanCandidate(null);
+          setScannerInitialRoleId(null);
         }}
         onSuccess={(newCandidate, isDuplicate, duplicateCandidate) => {
           setRescanCandidate(null);
+          setScannerInitialRoleId(null);
+          setIsScannerOpen(false);
           handleScanSuccess(newCandidate, isDuplicate, duplicateCandidate);
         }}
         onBatchSuccess={(newCandidates) => {
           setRescanCandidate(null);
+          setScannerInitialRoleId(null);
+          setIsScannerOpen(false);
           setCandidates(prev => {
             const existingIds = new Set(prev.map(c => c.id));
             const fresh = newCandidates.filter(c => !existingIds.has(c.id));
