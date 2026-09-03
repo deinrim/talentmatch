@@ -61,13 +61,12 @@ async function generateGeminiContentWithFallback(requestOptions: {
   config?: any;
 }) {
   const ai = getAIClient();
-  // Use ultra-fast, high-availability flash models first
+  // Prioritize Gemini 3.5 Flash for high-accuracy vision OCR and fast response time
   const modelsToTry = [
-    'gemini-3.1-flash-lite',
     'gemini-3.5-flash',
-    'gemini-3.1-flash-lite-preview',
     'gemini-flash-latest',
     'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
   ];
 
   let lastError: any = null;
@@ -75,9 +74,9 @@ async function generateGeminiContentWithFallback(requestOptions: {
     try {
       console.log(`[GEMINI] Fast OCR/Extraction attempt with model ${model}...`);
       
-      // Allow up to 12s per model for comprehensive multimodal vision OCR
+      // Allow up to 10s per model for comprehensive multimodal vision OCR
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 12s`)), 12000)
+        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 10s`)), 10000)
       );
 
       const generatePromise = ai.models.generateContent({
@@ -440,18 +439,24 @@ app.post('/api/candidates/process-resume', async (req, res) => {
     let extractedData: any = null;
 
     const extractionPrompt = `
-You are an expert HR recruitment OCR and document parsing engine.
-CRITICAL INSTRUCTION:
-Carefully inspect the resume document pages.
-You MUST extract the candidate's ACTUAL personal details printed on the document:
-- Read their REAL first name and last name printed at the top/header of the resume. DO NOT invent, hallucinate, or use demo names.
-- If only one name is visible (e.g. "Arun"), set "first_name": "Arun", "last_name": "".
-- Extract their actual email, phone, location, work history, and education directly from the document.
-- In "extracted_raw_text", transcribe the primary visible text from the resume.
+You are an expert HR recruitment OCR and multimodal document parsing engine.
+CRITICAL MANDATES:
+Carefully inspect the attached resume document image(s).
+You MUST extract the candidate's ACTUAL details printed on the document:
+1. NAME EXTRACTION:
+- Look at the top header, banner, title block, or first line of the document where the candidate's name is printed (e.g. ARUN KUMAR JAISWAL).
+- Parse the name into Title Case: "first_name": "Arun Kumar", "last_name": "Jaiswal".
+- If only one name is printed (e.g. "Arun"), set "first_name": "Arun", "last_name": "".
+- STRICTLY FORBIDDEN: Do NOT hallucinate, invent, or substitute placeholder names like "Karan Verma", "John Doe", or "Scanned Candidate". Extract the real printed name.
+
+2. CONTACT & PROFESSIONAL DETAILS:
+- Extract their real email, mobile phone number, location, and current job title.
+- If current company is visible (e.g. "HDFC Life", "Max Life", "ICICI"), extract it.
+- In "extracted_raw_text", transcribe the visible text from the resume accurately.
 
 Output valid JSON strictly adhering to this schema:
 {
-  "first_name": "string (the exact name found on document)",
+  "first_name": "string (the exact name found on document in Title Case)",
   "last_name": "string (the exact surname found on document, or empty string)",
   "email": "string or null",
   "phone": "string or null",
@@ -491,12 +496,19 @@ Output valid JSON strictly adhering to this schema:
   ],
   "certifications": ["string"],
   "languages": ["string"],
-  "extracted_raw_text": "string (transcribed text)"
+  "extracted_raw_text": "string (transcribed text from the image)"
 }
 `;
 
     if (process.env.GEMINI_API_KEY) {
       const parts: any[] = [];
+
+      // Add text instruction part FIRST (standard multimodal prompt ordering)
+      let textContent = extractionPrompt;
+      if (rawText) {
+        textContent += `\n\n--- ADDITIONAL DOCUMENT / OCR TEXT SUPPLIED ---\n${rawText}`;
+      }
+      parts.push({ text: textContent });
 
       // Add image parts if provided
       if (images && images.length > 0) {
@@ -518,13 +530,6 @@ Output valid JSON strictly adhering to this schema:
           }
         });
       }
-
-      // Add text instruction part
-      let textContent = extractionPrompt;
-      if (rawText) {
-        textContent += `\n\n--- ADDITIONAL DOCUMENT / OCR TEXT SUPPLIED ---\n${rawText}`;
-      }
-      parts.push({ text: textContent });
 
       try {
         console.log(`[PROCESS RESUME] Calling Gemini with ${parts.length} parts across models...`);
@@ -1690,6 +1695,9 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only boot local listener when running standalone or in container (not during Vercel serverless imports)
+if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
 
 export default app;

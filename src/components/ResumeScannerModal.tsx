@@ -118,7 +118,7 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [isMirrored, setIsMirrored] = useState(false);
-  const [filterMode, setFilterMode] = useState<'normal' | 'contrast' | 'bw'>('contrast');
+  const [filterMode, setFilterMode] = useState<'normal' | 'contrast' | 'bw'>('normal');
   const [shutterFlash, setShutterFlash] = useState(false);
   const [selectedPreviewPage, setSelectedPreviewPage] = useState<number | null>(null);
 
@@ -283,10 +283,10 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // Scale frame to optimal dimensions (< 960px for instant OCR)
-    let w = video.videoWidth || 960;
-    let h = video.videoHeight || 720;
-    const maxDim = 960;
+    // Scale frame to optimal high-fidelity dimensions (< 1600px for crisp, legible text OCR)
+    let w = video.videoWidth || 1280;
+    let h = video.videoHeight || 960;
+    const maxDim = 1600;
     if (w > maxDim || h > maxDim) {
       if (w > h) {
         h = Math.round((h * maxDim) / w);
@@ -302,9 +302,10 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     const ctx = canvas.getContext('2d');
     if (ctx) {
       if (filterMode === 'contrast') {
-        ctx.filter = 'contrast(1.4) brightness(1.05) saturate(1.1)';
+        // Balanced contrast that prevents white highlights from washing out printed text
+        ctx.filter = 'contrast(1.15) brightness(1.02)';
       } else if (filterMode === 'bw') {
-        ctx.filter = 'grayscale(1) contrast(1.6) brightness(1.1)';
+        ctx.filter = 'grayscale(1) contrast(1.25) brightness(1.02)';
       } else {
         ctx.filter = 'none';
       }
@@ -319,7 +320,8 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.80);
+      // High-quality JPEG output (0.88) ensures text characters don't suffer compression artifacts
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       
       const newPages = [...capturedPages];
       if (activePageToScan <= newPages.length) {
@@ -509,78 +511,82 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     };
 
     try {
-      // 1. First attempt fast server OCR with generous 30s timeout for mobile image upload + multimodal AI OCR
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      // 1. First attempt robust server multimodal OCR with retry
+      let responseData: any = null;
 
-      const response = await fetch('/api/candidates/process-resume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          candidateId: rescanCandidate?.id,
-          images: capturedPages,
-          rawText: rawText,
-          fileName: uploadedFileName,
-          source: capturedPages.length > 0 ? 'Camera Scan' : 'Manual Upload',
-          targetJobRoleId: selectedJobRoleId
-        }),
-      }).catch(fetchErr => {
-        console.warn('Network request failed or aborted:', fetchErr);
-        return null;
-      });
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 25000);
 
-      clearTimeout(timeoutId);
+          const response = await fetch('/api/candidates/process-resume', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              candidateId: rescanCandidate?.id,
+              images: capturedPages,
+              rawText: rawText,
+              fileName: uploadedFileName,
+              source: capturedPages.length > 0 ? 'Camera Scan' : 'Manual Upload',
+              targetJobRoleId: selectedJobRoleId
+            }),
+          });
 
-      if (response && response.ok) {
-        const data = await response.json().catch(() => null);
-        if (data && data.candidate) {
-          await finishScan(data.candidate, !!data.isDuplicate, data.duplicateCandidate || null);
-          return;
+          clearTimeout(timeoutId);
+
+          if (response && response.ok) {
+            const data = await response.json().catch(() => null);
+            if (data && data.candidate && data.candidate.first_name) {
+              responseData = data;
+              break;
+            }
+          } else {
+            console.warn(`[OCR SERVER] Attempt ${attempt} returned status: ${response?.status}`);
+          }
+        } catch (fetchErr) {
+          console.warn(`[OCR SERVER] Attempt ${attempt} network error:`, fetchErr);
         }
+      }
+
+      if (responseData && responseData.candidate) {
+        await finishScan(responseData.candidate, !!responseData.isDuplicate, responseData.duplicateCandidate || null);
+        return;
       }
     } catch (err: any) {
-      console.warn('Server OCR endpoint unavailable, activating instant client-side OCR engine:', err);
+      console.warn('Server OCR endpoint exception:', err);
     }
 
-    // 2. High-Speed Local OCR & Rubric Engine (Guaranteed 100% Landing)
+    // 2. Local Text Parser (Only when actual text is available e.g. text/PDF uploads)
     try {
-      let localExtractedText = rawText;
+      if (rawText && rawText.trim().length > 20) {
+        const localCandidate = parseResumeLocally(
+          rawText,
+          capturedPages,
+          uploadedFileName,
+          jobRoles,
+          selectedJobRoleId,
+          rescanCandidate
+        );
 
-      // If text is not pre-extracted (e.g. camera photo) and server was unreachable/static, run on-device OCR
-      if (!localExtractedText && capturedPages.length > 0) {
-        try {
-          const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng');
-          const ret = await worker.recognize(capturedPages[0]);
-          await worker.terminate();
-          if (ret && ret.data && ret.data.text) {
-            localExtractedText = ret.data.text;
-            console.log('[ON-DEVICE OCR] Successfully extracted resume text:', localExtractedText.slice(0, 100));
-          }
-        } catch (tessErr) {
-          console.warn('[ON-DEVICE OCR] Notice on-device OCR fallback:', tessErr);
-        }
+        const existingDuplicate = (allCandidates || []).find(c => 
+          c.id !== localCandidate.id && (
+            (c.email && localCandidate.email && c.email.toLowerCase() === localCandidate.email.toLowerCase()) ||
+            (c.phone && localCandidate.phone && c.phone.replace(/\D/g, '') === localCandidate.phone.replace(/\D/g, '') && c.phone.length > 6)
+          )
+        ) || null;
+
+        await finishScan(localCandidate, !!existingDuplicate, existingDuplicate);
+        return;
       }
 
-      const localCandidate = parseResumeLocally(
-        localExtractedText,
-        capturedPages,
-        uploadedFileName,
-        jobRoles,
-        selectedJobRoleId,
-        rescanCandidate
+      // If camera photos could not be processed and no text was extracted, do NOT create a fake candidate
+      clearInterval(stepInterval);
+      clearInterval(timerInterval);
+      setIsProcessing(false);
+      setProcessingError(
+        'Could not clearly extract candidate details from the scanned photo. Please ensure good room lighting, hold the phone steady over the candidate name header, and retake the photo.'
       );
-
-      // Check duplicate against existing candidate list
-      const existingDuplicate = (allCandidates || []).find(c => 
-        c.id !== localCandidate.id && (
-          (c.email && localCandidate.email && c.email.toLowerCase() === localCandidate.email.toLowerCase()) ||
-          (c.phone && localCandidate.phone && c.phone.replace(/\D/g, '') === localCandidate.phone.replace(/\D/g, '') && c.phone.length > 6)
-        )
-      ) || null;
-
-      await finishScan(localCandidate, !!existingDuplicate, existingDuplicate);
     } catch (fallbackErr: any) {
       clearInterval(stepInterval);
       clearInterval(timerInterval);
