@@ -545,8 +545,26 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
 
     // 2. High-Speed Local OCR & Rubric Engine (Guaranteed 100% Landing)
     try {
+      let localExtractedText = rawText;
+
+      // If text is not pre-extracted (e.g. camera photo) and server was unreachable/static, run on-device OCR
+      if (!localExtractedText && capturedPages.length > 0) {
+        try {
+          const { createWorker } = await import('tesseract.js');
+          const worker = await createWorker('eng');
+          const ret = await worker.recognize(capturedPages[0]);
+          await worker.terminate();
+          if (ret && ret.data && ret.data.text) {
+            localExtractedText = ret.data.text;
+            console.log('[ON-DEVICE OCR] Successfully extracted resume text:', localExtractedText.slice(0, 100));
+          }
+        } catch (tessErr) {
+          console.warn('[ON-DEVICE OCR] Notice on-device OCR fallback:', tessErr);
+        }
+      }
+
       const localCandidate = parseResumeLocally(
-        rawText,
+        localExtractedText,
         capturedPages,
         uploadedFileName,
         jobRoles,
