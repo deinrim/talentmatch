@@ -238,26 +238,60 @@ export function parseResumeLocally(
   const text = (rawText || '').trim();
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // Extract Name
-  let firstName = 'Karan';
-  let lastName = 'Verma';
+  // Extract Name from existing candidate, text lines, filename, or email
+  let firstName = rescanCandidate?.first_name || '';
+  let lastName = rescanCandidate?.last_name || '';
 
-  if (lines.length > 0) {
-    const firstLineClean = lines[0].replace(/[^a-zA-Z\s]/g, '').trim();
-    const parts = firstLineClean.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) {
-      firstName = parts[0];
-      lastName = parts.slice(1).join(' ');
-    } else if (parts.length === 1) {
-      firstName = parts[0];
-      lastName = 'Sharma';
+  if (!firstName) {
+    if (lines.length > 0) {
+      // Find the first line that looks like a person's name (alphabetic, not "resume", 1-4 words)
+      const nameCandidateLine = lines.slice(0, 6).find(l => {
+        const clean = l.replace(/[^a-zA-Z\s]/g, '').trim();
+        const words = clean.split(/\s+/).filter(Boolean);
+        return words.length >= 1 && words.length <= 4 && 
+               !l.toLowerCase().includes('resume') && 
+               !l.toLowerCase().includes('curriculum') &&
+               !l.toLowerCase().includes('profile') &&
+               !l.toLowerCase().includes('page');
+      });
+      if (nameCandidateLine) {
+        const parts = nameCandidateLine.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).filter(Boolean);
+        firstName = parts[0];
+        lastName = parts.slice(1).join(' ');
+      }
     }
-  } else if (fileName && !fileName.toLowerCase().includes('scanned')) {
-    const cleanFile = fileName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ').trim();
-    const parts = cleanFile.split(/\s+/);
-    if (parts.length >= 2) {
-      firstName = parts[0];
-      lastName = parts.slice(1).join(' ');
+
+    // Check filename if name not found in lines
+    if (!firstName && fileName) {
+      const cleanFile = fileName.replace(/\.[^/.]+$/, '').replace(/resume|cv|biodata/gi, '').replace(/[_\-\.]/g, ' ').trim();
+      const parts = cleanFile.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        firstName = parts[0];
+        lastName = parts.slice(1).join(' ');
+      } else if (parts.length === 1 && parts[0].length > 1) {
+        firstName = parts[0];
+        lastName = '';
+      }
+    }
+
+    // Check email prefix if available
+    if (!firstName && text) {
+      const matchedEmail = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)?.[0];
+      if (matchedEmail) {
+        const prefix = matchedEmail.split('@')[0].replace(/[0-9]/g, '');
+        const emailParts = prefix.split(/[._-]/).filter(Boolean);
+        if (emailParts.length >= 2) {
+          firstName = emailParts[0].charAt(0).toUpperCase() + emailParts[0].slice(1);
+          lastName = emailParts[1].charAt(0).toUpperCase() + emailParts[1].slice(1);
+        } else if (emailParts.length === 1 && emailParts[0].length > 1) {
+          firstName = emailParts[0].charAt(0).toUpperCase() + emailParts[0].slice(1);
+        }
+      }
+    }
+
+    if (!firstName) {
+      firstName = 'Scanned';
+      lastName = 'Candidate';
     }
   }
 

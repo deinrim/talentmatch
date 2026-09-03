@@ -482,13 +482,13 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
       setElapsedSeconds(Number(((Date.now() - startTime) / 1000).toFixed(1)));
     }, 100);
 
-    // Fast visual step progress animation
+    // Smooth visual step progress animation across real OCR processing
     const stepInterval = setInterval(() => {
       setCurrentStepIndex(prev => {
         if (prev < 4) return prev + 1;
         return prev;
       });
-    }, 220);
+    }, 1100);
 
     const finishScan = async (cand: Candidate, isDup: boolean, dupCand: Candidate | null) => {
       clearInterval(stepInterval);
@@ -509,9 +509,9 @@ export const ResumeScannerModal: React.FC<ResumeScannerModalProps> = ({
     };
 
     try {
-      // 1. First attempt fast server OCR with 6s timeout
+      // 1. First attempt fast server OCR with generous 30s timeout for mobile image upload + multimodal AI OCR
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       const response = await fetch('/api/candidates/process-resume', {
         method: 'POST',

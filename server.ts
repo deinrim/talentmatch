@@ -61,10 +61,13 @@ async function generateGeminiContentWithFallback(requestOptions: {
   config?: any;
 }) {
   const ai = getAIClient();
+  // Use ultra-fast, high-availability flash models first
   const modelsToTry = [
-    'gemini-3.8-flash',
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-flash-latest',
+    'gemini-3.8-flash',
   ];
 
   let lastError: any = null;
@@ -72,20 +75,15 @@ async function generateGeminiContentWithFallback(requestOptions: {
     try {
       console.log(`[GEMINI] Fast OCR/Extraction attempt with model ${model}...`);
       
-      // Fast timeout per model with instant fallback
+      // Allow up to 12s per model for comprehensive multimodal vision OCR
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 6s`)), 6000)
+        setTimeout(() => reject(new Error(`Timeout: ${model} exceeded 12s`)), 12000)
       );
-
-      const mergedConfig = {
-        thinkingConfig: { thinkingBudget: 0 },
-        ...requestOptions.config,
-      };
 
       const generatePromise = ai.models.generateContent({
         model: model,
         contents: requestOptions.contents,
-        config: mergedConfig,
+        config: requestOptions.config,
       });
 
       const aiResponse: any = await Promise.race([generatePromise, timeoutPromise]);
@@ -442,16 +440,23 @@ app.post('/api/candidates/process-resume', async (req, res) => {
     let extractedData: any = null;
 
     const extractionPrompt = `
-You are a fast HR recruitment OCR parser.
-Examine the resume document pages and extract the candidate profile into this JSON schema:
+You are an expert HR recruitment OCR and document parsing engine.
+CRITICAL INSTRUCTION:
+Carefully inspect the resume document pages.
+You MUST extract the candidate's ACTUAL personal details printed on the document:
+- Read their REAL first name and last name printed at the top/header of the resume. DO NOT invent, hallucinate, or use demo names.
+- If only one name is visible (e.g. "Arun"), set "first_name": "Arun", "last_name": "".
+- Extract their actual email, phone, location, work history, and education directly from the document.
+- In "extracted_raw_text", transcribe the primary visible text from the resume.
 
+Output valid JSON strictly adhering to this schema:
 {
-  "first_name": "string",
-  "last_name": "string",
+  "first_name": "string (the exact name found on document)",
+  "last_name": "string (the exact surname found on document, or empty string)",
   "email": "string or null",
   "phone": "string or null",
   "location": "string or null",
-  "professional_summary": "string (2-3 sentences max)",
+  "professional_summary": "string (2-3 sentences based on document)",
   "total_experience_months": number,
   "current_job_title": "string or null",
   "current_company": "string or null",
@@ -485,7 +490,8 @@ Examine the resume document pages and extract the candidate profile into this JS
     }
   ],
   "certifications": ["string"],
-  "languages": ["string"]
+  "languages": ["string"],
+  "extracted_raw_text": "string (transcribed text)"
 }
 `;
 
@@ -555,10 +561,39 @@ Examine the resume document pages and extract the candidate profile into this JS
       const text = rawText || '';
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
       
-      const firstLine = lines[0] || 'Scanned Candidate';
-      const nameParts = firstLine.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).filter(Boolean);
-      const parsedFirstName = nameParts[0] || 'Candidate';
-      const parsedLastName = nameParts.slice(1).join(' ') || '';
+      let parsedFirstName = '';
+      let parsedLastName = '';
+
+      if (lines.length > 0) {
+        // Find line that looks like candidate name (2-4 words, alphabetic)
+        const nameLine = lines.slice(0, 5).find(l => {
+          const c = l.replace(/[^a-zA-Z\s]/g, '').trim();
+          const w = c.split(/\s+/).filter(Boolean);
+          return w.length >= 1 && w.length <= 4 && !l.toLowerCase().includes('resume') && !l.toLowerCase().includes('curriculum');
+        });
+        if (nameLine) {
+          const parts = nameLine.replace(/[^a-zA-Z\s]/g, '').trim().split(/\s+/).filter(Boolean);
+          parsedFirstName = parts[0];
+          parsedLastName = parts.slice(1).join(' ');
+        }
+      }
+
+      if (!parsedFirstName && fileName) {
+        const cleanFile = fileName.replace(/\.[^/.]+$/, '').replace(/resume|cv|biodata/gi, '').replace(/[_\-\.]/g, ' ').trim();
+        const parts = cleanFile.split(/\s+/).filter(Boolean);
+        if (parts.length >= 2) {
+          parsedFirstName = parts[0];
+          parsedLastName = parts.slice(1).join(' ');
+        } else if (parts.length === 1 && parts[0].length > 1) {
+          parsedFirstName = parts[0];
+          parsedLastName = '';
+        }
+      }
+
+      if (!parsedFirstName) {
+        parsedFirstName = 'Scanned';
+        parsedLastName = 'Candidate';
+      }
 
       const detectedEmail = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)?.[0] || null;
       const detectedPhone = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/)?.[0] || null;
@@ -670,8 +705,8 @@ Examine the resume document pages and extract the candidate profile into this JS
     const candidateObj: Candidate = {
       id: targetCandidateId,
       candidate_code: candidateCode,
-      first_name: extractedData.first_name || 'Arun',
-      last_name: extractedData.last_name || 'Kumar',
+      first_name: extractedData.first_name || 'Scanned',
+      last_name: extractedData.last_name || '',
       email: extractedData.email || 'Not specified',
       phone: extractedData.phone || 'Not specified',
       location: extractedData.location || 'Not specified',
